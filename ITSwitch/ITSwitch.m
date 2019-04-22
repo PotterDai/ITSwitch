@@ -31,10 +31,10 @@ static CGFloat const kDisabledOpacity = 0.5f;
 
 #define kKnobBackgroundColor [NSColor colorWithCalibratedWhite:1.f alpha:1.f]
 
-#define kDisabledBorderColor [NSColor colorWithCalibratedWhite:0.f alpha:0.2f]
+#define kDisabledBorderColor [[NSColor systemGrayColor] colorWithAlphaComponent:0.6f]
 #define kDisabledBackgroundColor [NSColor clearColor]
 #define kDefaultTintColor [NSColor colorWithCalibratedRed:0.27f green:0.86f blue:0.36f alpha:1.f]
-#define kInactiveBackgroundColor [NSColor colorWithCalibratedWhite:0 alpha:0.3]
+#define kInactiveBackgroundColor [[NSColor systemGrayColor] colorWithAlphaComponent:0.6f]
 
 // ---------------------------------------------------------------------------------------
 #pragma mark - Interface Extension
@@ -43,6 +43,8 @@ static CGFloat const kDisabledOpacity = 0.5f;
 @interface ITSwitch () {
     __weak id _target;
     SEL _action;
+    
+    BOOL checkIsAlreadySet;
 }
 
 @property (nonatomic, getter = isActive) BOOL active;
@@ -76,25 +78,23 @@ static CGFloat const kDisabledOpacity = 0.5f;
 - (id)initWithCoder:(NSCoder *)coder {
     self = [super initWithCoder:coder];
     if (!self) return nil;
-    
     [self setUp];
-    
     return self;
 }
 
 - (id)initWithFrame:(NSRect)frame {
     self = [super initWithFrame:frame];
     if (!self) return nil;
-    
     [self setUp];
-    
     return self;
 }
 
 - (void)setUp {
     // The Switch is enabled per default
     self.enabled = YES;
-    
+    [ITSwitch exposeBinding:@"checked"];
+    [ITSwitch exposeBinding:@"userDefaultBindingKey"];
+
     // Set up the layer hierarchy
     [self setUpLayers];
 }
@@ -106,9 +106,6 @@ static CGFloat const kDisabledOpacity = 0.5f;
     self.layer = _rootLayer;
     self.wantsLayer = YES;
     
-    // Allow shadow to flow over bounds of the layer
-    _rootLayer.masksToBounds = NO;
-
     // Background layer
     _backgroundLayer = [CALayer layer];
     _backgroundLayer.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
@@ -143,6 +140,11 @@ static CGFloat const kDisabledOpacity = 0.5f;
     [self reloadLayer];
 }
 
+- (void) dealloc {
+    if (self.userDefaultBindingKey) {
+        [[NSUserDefaults standardUserDefaults] removeObserver:self forKeyPath:self.userDefaultBindingKey];
+    }
+}
 
 
 // ----------------------------------------------------
@@ -266,6 +268,7 @@ static CGFloat const kDisabledOpacity = 0.5f;
 }
 
 - (void)mouseDragged:(NSEvent *)theEvent {
+    if (!self.active) return;
     if (!self.isEnabled) return;
 
     self.dragged = YES;
@@ -349,7 +352,24 @@ static CGFloat const kDisabledOpacity = 0.5f;
 		_checked = checked;
         [self propagateValue:@(checked) forBinding:@"checked"];
     }
-    
+
+    if (self.userDefaultBindingKey) {
+        if ([[NSUserDefaults standardUserDefaults] objectForKey:self.userDefaultBindingKey]) {
+            BOOL checkedInDefault = [[NSUserDefaults standardUserDefaults] boolForKey:self.userDefaultBindingKey];
+            if (checkedInDefault != checked) {
+                [[NSUserDefaults standardUserDefaults] setBool:checked forKey:self.userDefaultBindingKey];
+                [[NSUserDefaults standardUserDefaults] synchronize];
+            }
+        } else {
+            if (checked) {
+                // only set defaults if not 0 to avoid settings before the app sets its default values at first launch
+                [[NSUserDefaults standardUserDefaults] setBool:checked forKey:self.userDefaultBindingKey];
+                [[NSUserDefaults standardUserDefaults] synchronize];
+            }
+        }
+    }
+    //NSLog(@"ITSwitch setChecked: %@, %@", self.userDefaultBindingKey,self.checked?@"YES":@"NO" );
+
     [self reloadLayer];
 }
 
@@ -381,6 +401,42 @@ static CGFloat const kDisabledOpacity = 0.5f;
     [super setEnabled:enabled];
     [self reloadLayer];
 }
+
+- (void)setUserDefaultBindingKey:(NSString*) key {
+    _userDefaultBindingKey = key;
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:key]) {
+        BOOL checkedTemp = [[NSUserDefaults standardUserDefaults] boolForKey:key];
+        self.checked = checkedTemp;
+    } else {
+        if (self.checked) {
+            // only set defaults if not 0 to avoid settings before the app sets its default values at first launch
+            [[NSUserDefaults standardUserDefaults] setBool:self.checked forKey:key];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+        }
+    }
+    
+    [[NSUserDefaults standardUserDefaults] addObserver:self
+                                            forKeyPath:key
+                                               options:NSKeyValueObservingOptionNew
+                                               context:NULL];
+
+    //NSLog(@"ITSwitch setUserDefaultBindingKey: %@, %@", self.userDefaultBindingKey,self.checked?@"YES":@"NO" );
+
+    [self reloadLayer];
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSKeyValueChangeKey,id> *)change context:(void *)context {
+
+    if ([keyPath isEqualToString:self.userDefaultBindingKey]) {
+        BOOL checkedInDefault = [[NSUserDefaults standardUserDefaults] boolForKey:self.userDefaultBindingKey];
+        if (checkedInDefault != self.checked) {
+            self.checked = checkedInDefault;
+        }
+    }
+    //NSLog(@"ITSwitch observeValueForKeyPath: %@, %@", self.userDefaultBindingKey,self.checked?@"YES":@"NO" );
+
+}
+
 
 // -----------------------------------
 #pragma mark - Helpers
